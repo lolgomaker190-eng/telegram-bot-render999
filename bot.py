@@ -74,35 +74,43 @@ def main():
 
     # Режим для Render (через вебхук)
     if os.getenv('RENDER'):
-        from telegram.ext import Updater
-        import asyncio
-        
-        async def set_webhook_on_start():
-            bot = Bot(token=TELEGRAM_BOT_TOKEN)
-            # Имя сервиса берем из переменной окружения Render
-            service_name = os.getenv('RENDER_SERVICE_NAME', 'your-service-name')
-            webhook_url = f"https://{service_name}.onrender.com/{TELEGRAM_BOT_TOKEN}"
-            await bot.set_webhook(url=webhook_url)
-            logger.info(f"Webhook установлен: {webhook_url}")
+        # ВАЖНО: На Render используем существующий event loop
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
 
-        async def main_async():
-            await set_webhook_on_start()
-            port = int(os.getenv('PORT', 8443))
-            service_name = os.getenv('RENDER_SERVICE_NAME', 'your-service-name')
+        async def webhook_setup():
+            """Настройка вебхука и запуск сервера."""
+            await set_webhook()
+            
+            port = int(os.getenv('PORT', 10000))
+            service_name = os.getenv('RENDER_SERVICE_NAME')
             webhook_url = f"https://{service_name}.onrender.com/{TELEGRAM_BOT_TOKEN}"
+            
+            logger.info(f"🚀 Запуск веб-сервера на порту {port}...")
             
             await application.run_webhook(
                 listen="0.0.0.0",
                 port=port,
                 url_path=TELEGRAM_BOT_TOKEN,
-                webhook_url=webhook_url
+                webhook_url=webhook_url,
+                drop_pending_updates=True
             )
 
-        asyncio.run(main_async())
+        try:
+            # Проверяем, работает ли уже event loop
+            if loop.is_running():
+                # Если loop уже запущен, добавляем задачу
+                loop.create_task(webhook_setup())
+            else:
+                # Иначе запускаем loop
+                loop.run_until_complete(webhook_setup())
+        except Exception as e:
+            logger.error(f"Ошибка при запуске: {e}")
+            
     else:
         # Режим для локальной отладки (polling)
-        logger.info("Запуск в режиме polling (локальная отладка)...")
+        logger.info("🖥️ Запуск в режиме polling (локальная отладка)...")
         application.run_polling()
-
-if __name__ == '__main__':
-    main()
